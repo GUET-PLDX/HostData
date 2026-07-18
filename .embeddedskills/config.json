@@ -1,7 +1,0 @@
-{
-  "jlink": {
-    "device": "STM32F407IG",
-    "interface": "SWD",
-    "speed": "4000"
-  }
-}

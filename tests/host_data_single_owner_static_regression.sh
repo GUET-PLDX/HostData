@@ -77,6 +77,12 @@ apply_gimbal=$(extract_block 'void ApplyGimbal\(const HostGimbalTarget&')
 freshness_changed=$(extract_block 'bool FreshnessChanged\(LibXR::MillisecondTimestamp')
 [[ -n "$freshness_changed" ]] || fail 'FreshnessChanged owner helper'
 
+is_fresh=$(extract_block 'static bool IsFresh\(bool received,')
+[[ -n "$is_fresh" ]] || fail 'received-aware IsFresh helper'
+
+build_host_cmd=$(extract_block 'CMD::Data BuildHostCMD\(LibXR::MillisecondTimestamp')
+[[ -n "$build_host_cmd" ]] || fail 'BuildHostCMD helper'
+
 on_monitor=$(extract_block 'void OnMonitor\(\) override')
 [[ -n "$on_monitor" ]] || fail 'OnMonitor override'
 
@@ -121,10 +127,10 @@ require_block_pattern "$owner_thread" \
   'const auto DATA\s*=\s*gimbal_sub\.GetData\(\);\s*host_data->ApplyGimbal\(DATA, NOW\);\s*gimbal_sub\.StartWaiting\(\);' \
   'gimbal subscriber rearm after consumption'
 require_block_pattern "$owner_thread" \
-  'host_data->host_chassis_data_\s*=\s*chassis_sub\.GetData\(\);\s*host_data->last_chassis_time_\s*=\s*NOW;\s*chassis_sub\.StartWaiting\(\);' \
+  'host_data->host_chassis_data_\s*=\s*chassis_sub\.GetData\(\);\s*host_data->last_chassis_time_\s*=\s*NOW;\s*host_data->chassis_received_\s*=\s*true;\s*chassis_sub\.StartWaiting\(\);' \
   'chassis subscriber rearm after consumption'
 require_block_pattern "$owner_thread" \
-  'host_data->host_fire_notify_\s*=\s*fire_sub\.GetData\(\);\s*host_data->last_fire_time_\s*=\s*NOW;\s*fire_sub\.StartWaiting\(\);' \
+  'host_data->host_fire_notify_\s*=\s*fire_sub\.GetData\(\);\s*host_data->last_fire_time_\s*=\s*NOW;\s*host_data->fire_received_\s*=\s*true;\s*fire_sub\.StartWaiting\(\);' \
   'fire subscriber rearm after consumption'
 
 require_block_text "$owner_thread" 'bool updated = false;' \
@@ -153,17 +159,53 @@ require_block_text "$apply_gimbal" \
   'gimbal acceleration copy'
 require_block_text "$apply_gimbal" 'last_gimbal_time_ = now;' \
   'gimbal timestamp update'
+require_block_text "$apply_gimbal" 'gimbal_received_ = true;' \
+  'gimbal received-state update'
 
 for state in chassis gimbal fire; do
+  require_file_text "bool ${state}_received_ = false;" \
+    "${state} received-state member"
   require_block_text "$freshness_changed" \
-    "this->IsFresh(last_${state}_time_, now)" \
+    "this->IsFresh(${state}_received_, last_${state}_time_, now)" \
     "${state} freshness sample"
   require_block_text "$freshness_changed" \
     "${state}_fresh_ = ${state^^}_FRESH;" \
     "${state} freshness state update"
+  require_block_text "$build_host_cmd" \
+    "this->IsFresh(${state}_received_, last_${state}_time_, now)" \
+    "${state} BuildHostCMD freshness guard"
 done
+require_block_pattern "$freshness_changed" \
+  'const bool CHANGED\s*=\s*CHASSIS_FRESH != chassis_fresh_\s*\|\|\s*GIMBAL_FRESH != gimbal_fresh_\s*\|\|\s*FIRE_FRESH != fire_fresh_;' \
+  'freshness edge must compare all current and previous states'
 require_block_text "$freshness_changed" 'return CHANGED;' \
   'freshness transition result'
+
+require_block_pattern "$is_fresh" \
+  'return received\s*&&\s*\(now - last_time\)\.ToMillisecond\(\) <=\s*HOST_DATA_TIMEOUT_MS;' \
+  'received-aware wrap-safe freshness duration'
+forbid_file_text 'static_cast<uint32_t>(last_time) != 0U' \
+  'timestamp zero must not mean never received'
+
+writer_blocks="${owner_thread}"$'\n'"${apply_gimbal}"$'\n'"${freshness_changed}"
+for member in host_chassis_data_ host_fire_notify_ host_euler_ host_gyro_ \
+  host_accl_ last_chassis_time_ last_gimbal_time_ last_fire_time_ \
+  chassis_received_ gimbal_received_ fire_received_ chassis_fresh_ \
+  gimbal_fresh_ fire_fresh_; do
+  all_assignment_count=$(grep -Po \
+    "(?:host_data->)?${member}[[:space:]]*=" "$header" | wc -l)
+  owner_assignment_count=$(grep -Po \
+    "(?:host_data->)?${member}[[:space:]]*=" <<<"$writer_blocks" | wc -l)
+  [[ "$owner_assignment_count" -eq 1 ]] || \
+    fail "single owner writer: ${member}"
+
+  expected_assignment_count=2
+  if [[ "$member" == host_euler_ ]]; then
+    expected_assignment_count=1
+  fi
+  [[ "$all_assignment_count" -eq "$expected_assignment_count" ]] || \
+    fail "owner-only global writer: ${member}"
+done
 
 compact_monitor=$(tr -d '[:space:]' <<<"$on_monitor")
 [[ "$compact_monitor" == 'voidOnMonitor()override{}' ]] || \

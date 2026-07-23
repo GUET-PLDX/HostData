@@ -112,6 +112,7 @@ class HostData : public LibXR::Application {
       if (chassis_sub.Available()) {
         host_data->host_chassis_data_ = chassis_sub.GetData();
         host_data->last_chassis_time_ = NOW;
+        host_data->chassis_received_ = true;
         chassis_sub.StartWaiting();
         updated = true;
       }
@@ -119,6 +120,7 @@ class HostData : public LibXR::Application {
       if (fire_sub.Available()) {
         host_data->host_fire_notify_ = fire_sub.GetData();
         host_data->last_fire_time_ = NOW;
+        host_data->fire_received_ = true;
         fire_sub.StartWaiting();
         updated = true;
       }
@@ -140,12 +142,15 @@ class HostData : public LibXR::Application {
     host_accl_ =
         Eigen::Matrix<float, 3, 1>(data.rol_ddot, data.pit_ddot, data.yaw_ddot);
     last_gimbal_time_ = now;
+    gimbal_received_ = true;
   }
 
   bool FreshnessChanged(LibXR::MillisecondTimestamp now) {
-    const bool CHASSIS_FRESH = this->IsFresh(last_chassis_time_, now);
-    const bool GIMBAL_FRESH = this->IsFresh(last_gimbal_time_, now);
-    const bool FIRE_FRESH = this->IsFresh(last_fire_time_, now);
+    const bool CHASSIS_FRESH =
+        this->IsFresh(chassis_received_, last_chassis_time_, now);
+    const bool GIMBAL_FRESH =
+        this->IsFresh(gimbal_received_, last_gimbal_time_, now);
+    const bool FIRE_FRESH = this->IsFresh(fire_received_, last_fire_time_, now);
     const bool CHANGED = CHASSIS_FRESH != chassis_fresh_ ||
                          GIMBAL_FRESH != gimbal_fresh_ ||
                          FIRE_FRESH != fire_fresh_;
@@ -156,9 +161,9 @@ class HostData : public LibXR::Application {
     return CHANGED;
   }
 
-  static bool IsFresh(LibXR::MillisecondTimestamp last_time,
+  static bool IsFresh(bool received, LibXR::MillisecondTimestamp last_time,
                       LibXR::MillisecondTimestamp now) {
-    return static_cast<uint32_t>(last_time) != 0U &&
+    return received &&
            (now - last_time).ToMillisecond() <= HOST_DATA_TIMEOUT_MS;
   }
 
@@ -166,15 +171,15 @@ class HostData : public LibXR::Application {
     CMD::Data host_cmd = {};
     host_cmd.ctrl_source = CMD::ControlSource::CTRL_SOURCE_AI;
 
-    // 在线状态只由接收时间戳决定，合法的零速度和零角度不能视为离线。
-    if (this->IsFresh(last_chassis_time_, now)) {
+    // 在线状态由接收标志和时间戳决定，合法的零值数据不能视为离线。
+    if (this->IsFresh(chassis_received_, last_chassis_time_, now)) {
       host_cmd.chassis.x = host_chassis_data_.vx;
       host_cmd.chassis.y = host_chassis_data_.vy;
       host_cmd.chassis.z = host_chassis_data_.w;
       host_cmd.chassis_online = true;
     }
 
-    if (this->IsFresh(last_gimbal_time_, now)) {
+    if (this->IsFresh(gimbal_received_, last_gimbal_time_, now)) {
       host_cmd.gimbal.pit = host_euler_.Pitch();
       host_cmd.gimbal.yaw = host_euler_.Yaw();
       host_cmd.gimbal.pit_dot = host_gyro_.y();
@@ -184,7 +189,7 @@ class HostData : public LibXR::Application {
       host_cmd.gimbal_online = true;
     }
 
-    if (this->IsFresh(last_fire_time_, now)) {
+    if (this->IsFresh(fire_received_, last_fire_time_, now)) {
       host_cmd.launcher.isfire = host_fire_notify_.isfire;
     }
 
@@ -206,6 +211,10 @@ class HostData : public LibXR::Application {
   LibXR::MillisecondTimestamp last_chassis_time_ = 0;
   LibXR::MillisecondTimestamp last_gimbal_time_ = 0;
   LibXR::MillisecondTimestamp last_fire_time_ = 0;
+
+  bool chassis_received_ = false;
+  bool gimbal_received_ = false;
+  bool fire_received_ = false;
 
   bool chassis_fresh_ = false;
   bool gimbal_fresh_ = false;

@@ -5,9 +5,11 @@
 module_description: No description provided
 constructor_args:
   - cmd: '@cmd'
-  - host_euler_topic_name: "target_eulr"
+  - host_gimbal_topic_name: "target_euler"
   - host_chassis_data_topic_name: "host_chassis_data"
   - host_fire_topic_name: "host_fire_notify"
+  - task_stack_depth: 1024
+  - thread_priority: LibXR::Thread::Priority::MEDIUM
 template_args: []
 required_hardware: []
 depends: []
@@ -16,14 +18,10 @@ depends: []
 
 #include "CMD.hpp"
 #include "app_framework.hpp"
-#include "libxr_cb.hpp"
 #include "libxr_def.hpp"
 #include "libxr_time.hpp"
 #include "libxr_type.hpp"
-#include "logger.hpp"
 #include "message.hpp"
-#include "mutex.hpp"
-#include "semaphore.hpp"
 #include "thread.hpp"
 #include "timebase.hpp"
 #include "transform.hpp"
@@ -55,14 +53,18 @@ class HostData : public LibXR::Application {
    * @param hw 硬件容器
    * @param app 应用管理器
    * @param cmd CMD 模块引用
-   * @param host_euler_topic_name 云台目标欧拉角 Topic
+   * @param host_gimbal_topic_name 云台目标欧拉角 Topic
    * @param host_chassis_data_topic_name 底盘目标速度 Topic
    * @param host_fire_topic_name 发射控制 Topic
+   * @param task_stack_depth 数据聚合线程栈深度
+   * @param thread_priority 数据聚合线程优先级
    */
-  HostData(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-           CMD& cmd, const char* host_gimbal_topic_name,
-           const char* host_chassis_data_topic_name,
-           const char* host_fire_topic_name)
+  HostData(
+      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
+      const char* host_gimbal_topic_name,
+      const char* host_chassis_data_topic_name,
+      const char* host_fire_topic_name, uint32_t task_stack_depth,
+      LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::MEDIUM)
       : cmd_(&cmd),
         host_gimbal_data_tp_(LibXR::Topic::CreateTopic<HostGimbalTarget>(
             host_gimbal_topic_name)),
@@ -71,94 +73,88 @@ class HostData : public LibXR::Application {
         host_fire_notify_tp_(
             LibXR::Topic::CreateTopic<LauncherCMD>(host_fire_topic_name)) {
     UNUSED(hw);
-
-    auto euler_callback = LibXR::Topic::Callback::Create(
-        [](bool in_isr, HostData* host_data,
-           const LibXR::ConstRawData& raw_data) {
-          HostGimbalTarget t;
-          LibXR::Memory::FastCopy(&t, raw_data.addr_, sizeof(t));
-          host_data->host_euler_ =
-              LibXR::EulerAngle<float>(t.rol, t.pit, t.yaw);
-          host_data->host_gyro_ =
-              Eigen::Matrix<float, 3, 1>(t.rol_dot, t.pit_dot, t.yaw_dot);
-          host_data->host_accl_ =
-              Eigen::Matrix<float, 3, 1>(t.rol_ddot, t.pit_ddot, t.yaw_ddot);
-          host_data->last_gimbal_time_ = LibXR::Timebase::GetMilliseconds();
-          host_data->HostCMD(in_isr);
-        },
-        this);
-
-    auto chassis_callback = LibXR::Topic::Callback::Create(
-        [](bool in_isr, HostData* host_data,
-           const LibXR::ConstRawData& raw_data) {
-          LibXR::Memory::FastCopy(&host_data->host_chassis_data_,
-                                  raw_data.addr_, sizeof(HostChassisTarget));
-          host_data->last_chassis_time_ = LibXR::Timebase::GetMilliseconds();
-          host_data->HostCMD(in_isr);
-        },
-        this);
-
-    auto fire_callback = LibXR::Topic::Callback::Create(
-        [](bool in_isr, HostData* host_data,
-           const LibXR::ConstRawData& raw_data) {
-          LibXR::Memory::FastCopy(&host_data->host_fire_notify_, raw_data.addr_,
-                                  sizeof(LauncherCMD));
-          host_data->last_fire_time_ = LibXR::Timebase::GetMilliseconds();
-          host_data->HostCMD(in_isr);
-        },
-        this);
-
-    host_gimbal_data_tp_.RegisterCallback(euler_callback);
-    host_chassis_data_tp_.RegisterCallback(chassis_callback);
-    host_fire_notify_tp_.RegisterCallback(fire_callback);
-
     app.Register(*this);
-  }
-
-  /**
-   * @brief 汇总并下发 Host 命令
-   * @param in_isr 是否在中断上下文（当前未使用）
-   */
-  void HostCMD(bool in_isr) {
-    UNUSED(in_isr);
-    auto now = LibXR::Timebase::GetMilliseconds();
-    CMD::Data host_cmd = this->BuildHostCMD(now);
-
-    cmd_->FeedAI(host_cmd);
+    thread_.Create(this, ThreadFunc, "HostDataThread", task_stack_depth,
+                   thread_priority);
   }
 
   /**
    * @brief 监控回调
    */
-  void OnMonitor() override {
-    auto now = LibXR::Timebase::GetMilliseconds();
-    const bool CHASSIS_TIMEOUT = !this->IsFresh(last_chassis_time_, now);
-    const bool GIMBAL_TIMEOUT = !this->IsFresh(last_gimbal_time_, now);
-    const bool FIRE_TIMEOUT = !this->IsFresh(last_fire_time_, now);
-
-    if (!CHASSIS_TIMEOUT && !GIMBAL_TIMEOUT && !FIRE_TIMEOUT) {
-      return;
-    }
-
-    if (CHASSIS_TIMEOUT) {
-      host_chassis_data_ = {};
-    }
-
-    if (GIMBAL_TIMEOUT) {
-      host_euler_ = LibXR::EulerAngle<float>(0.0f, 0.0f, 0.0f);
-      host_gyro_ = {0, 0, 0};
-      host_accl_ = {0, 0, 0};
-    }
-
-    if (FIRE_TIMEOUT) {
-      host_fire_notify_ = {};
-    }
-
-    cmd_->FeedAI(this->BuildHostCMD(now));
-  }
+  void OnMonitor() override {}
 
  private:
   static constexpr uint32_t HOST_DATA_TIMEOUT_MS = 150;
+
+  static void ThreadFunc(HostData* host_data) {
+    LibXR::Topic::ASyncSubscriber<HostGimbalTarget> gimbal_sub(
+        host_data->host_gimbal_data_tp_);
+    LibXR::Topic::ASyncSubscriber<HostChassisTarget> chassis_sub(
+        host_data->host_chassis_data_tp_);
+    LibXR::Topic::ASyncSubscriber<LauncherCMD> fire_sub(
+        host_data->host_fire_notify_tp_);
+    gimbal_sub.StartWaiting();
+    chassis_sub.StartWaiting();
+    fire_sub.StartWaiting();
+
+    LibXR::MillisecondTimestamp last_time = LibXR::Timebase::GetMilliseconds();
+    while (true) {
+      const auto NOW = LibXR::Timebase::GetMilliseconds();
+      bool updated = false;
+
+      if (gimbal_sub.Available()) {
+        const auto DATA = gimbal_sub.GetData();
+        host_data->ApplyGimbal(DATA, NOW);
+        gimbal_sub.StartWaiting();
+        updated = true;
+      }
+
+      if (chassis_sub.Available()) {
+        host_data->host_chassis_data_ = chassis_sub.GetData();
+        host_data->last_chassis_time_ = NOW;
+        chassis_sub.StartWaiting();
+        updated = true;
+      }
+
+      if (fire_sub.Available()) {
+        host_data->host_fire_notify_ = fire_sub.GetData();
+        host_data->last_fire_time_ = NOW;
+        fire_sub.StartWaiting();
+        updated = true;
+      }
+
+      const bool FRESHNESS_CHANGED = host_data->FreshnessChanged(NOW);
+      if (updated || FRESHNESS_CHANGED) {
+        host_data->cmd_->FeedAI(host_data->BuildHostCMD(NOW));
+      }
+
+      host_data->thread_.SleepUntil(last_time, 5);
+    }
+  }
+
+  void ApplyGimbal(const HostGimbalTarget& data,
+                   LibXR::MillisecondTimestamp now) {
+    host_euler_ = LibXR::EulerAngle<float>(data.rol, data.pit, data.yaw);
+    host_gyro_ =
+        Eigen::Matrix<float, 3, 1>(data.rol_dot, data.pit_dot, data.yaw_dot);
+    host_accl_ =
+        Eigen::Matrix<float, 3, 1>(data.rol_ddot, data.pit_ddot, data.yaw_ddot);
+    last_gimbal_time_ = now;
+  }
+
+  bool FreshnessChanged(LibXR::MillisecondTimestamp now) {
+    const bool CHASSIS_FRESH = this->IsFresh(last_chassis_time_, now);
+    const bool GIMBAL_FRESH = this->IsFresh(last_gimbal_time_, now);
+    const bool FIRE_FRESH = this->IsFresh(last_fire_time_, now);
+    const bool CHANGED = CHASSIS_FRESH != chassis_fresh_ ||
+                         GIMBAL_FRESH != gimbal_fresh_ ||
+                         FIRE_FRESH != fire_fresh_;
+
+    chassis_fresh_ = CHASSIS_FRESH;
+    gimbal_fresh_ = GIMBAL_FRESH;
+    fire_fresh_ = FIRE_FRESH;
+    return CHANGED;
+  }
 
   static bool IsFresh(LibXR::MillisecondTimestamp last_time,
                       LibXR::MillisecondTimestamp now) {
@@ -210,4 +206,10 @@ class HostData : public LibXR::Application {
   LibXR::MillisecondTimestamp last_chassis_time_ = 0;
   LibXR::MillisecondTimestamp last_gimbal_time_ = 0;
   LibXR::MillisecondTimestamp last_fire_time_ = 0;
+
+  bool chassis_fresh_ = false;
+  bool gimbal_fresh_ = false;
+  bool fire_fresh_ = false;
+
+  LibXR::Thread thread_;
 };

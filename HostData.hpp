@@ -17,6 +17,8 @@ depends: []
 // clang-format on
 
 #include "CMD.hpp"
+#include "HostDataChassisInput.hpp"
+#include "NavLinkProtocol.hpp"
 #include "app_framework.hpp"
 #include "libxr_def.hpp"
 #include "libxr_time.hpp"
@@ -32,12 +34,6 @@ depends: []
  */
 class HostData : public LibXR::Application {
  public:
-  struct HostChassisTarget {
-    float vx;
-    float vy;
-    float w;
-  };
-
   struct LauncherCMD {
     bool isfire;
   };
@@ -68,12 +64,17 @@ class HostData : public LibXR::Application {
       : cmd_(&cmd),
         host_gimbal_data_tp_(LibXR::Topic::CreateTopic<HostGimbalTarget>(
             host_gimbal_topic_name)),
-        host_chassis_data_tp_(LibXR::Topic::CreateTopic<HostChassisTarget>(
-            host_chassis_data_topic_name)),
+        host_chassis_data_tp_(
+            LibXR::Topic::CreateTopic<Pldx::NavLink::ChassisTargetV1>(
+                host_chassis_data_topic_name)),
+        host_chassis_session_status_tp_(
+            LibXR::Topic::CreateTopic<Pldx::HostChassisSession::Status>(
+                Pldx::HostChassisSession::STATUS_TOPIC)),
         host_fire_notify_tp_(
             LibXR::Topic::CreateTopic<LauncherCMD>(host_fire_topic_name)) {
     UNUSED(hw);
     app.Register(*this);
+    PublishChassisStatus(LibXR::Timebase::GetMilliseconds());
     thread_.Create(this, ThreadFunc, "HostDataThread", task_stack_depth,
                    thread_priority);
   }
@@ -84,12 +85,10 @@ class HostData : public LibXR::Application {
   void OnMonitor() override {}
 
  private:
-  static constexpr uint32_t HOST_DATA_TIMEOUT_MS = 150;
-
   static void ThreadFunc(HostData* host_data) {
     LibXR::Topic::ASyncSubscriber<HostGimbalTarget> gimbal_sub(
         host_data->host_gimbal_data_tp_);
-    LibXR::Topic::ASyncSubscriber<HostChassisTarget> chassis_sub(
+    LibXR::Topic::ASyncSubscriber<Pldx::NavLink::ChassisTargetV1> chassis_sub(
         host_data->host_chassis_data_tp_);
     LibXR::Topic::ASyncSubscriber<LauncherCMD> fire_sub(
         host_data->host_fire_notify_tp_);
@@ -110,11 +109,11 @@ class HostData : public LibXR::Application {
       }
 
       if (chassis_sub.Available()) {
-        host_data->host_chassis_data_ = chassis_sub.GetData();
-        host_data->last_chassis_time_ = NOW;
-        host_data->chassis_received_ = true;
+        const bool CHASSIS_ACCEPTED =
+            host_data->ApplyChassis(chassis_sub.GetData(), NOW);
         chassis_sub.StartWaiting();
-        updated = true;
+        updated =
+            Pldx::HostDataDetail::AccumulateUpdate(updated, CHASSIS_ACCEPTED);
       }
 
       if (fire_sub.Available()) {
@@ -145,17 +144,28 @@ class HostData : public LibXR::Application {
     gimbal_received_ = true;
   }
 
+  bool ApplyChassis(const Pldx::NavLink::ChassisTargetV1& data,
+                    LibXR::MillisecondTimestamp now) {
+    const bool ACCEPTED = chassis_input_.Apply(
+        data, now, [this, now] { cmd_->FeedAI(BuildHostCMD(now)); });
+    PublishChassisStatus(now);
+    return ACCEPTED;
+  }
+
   bool FreshnessChanged(LibXR::MillisecondTimestamp now) {
-    const bool CHASSIS_FRESH =
-        this->IsFresh(chassis_received_, last_chassis_time_, now);
+    auto CHASSIS_STATUS = chassis_input_.SessionStatus(now);
+    const bool CHASSIS_FRESH = CHASSIS_STATUS.armed_fresh;
     const bool GIMBAL_FRESH =
         this->IsFresh(gimbal_received_, last_gimbal_time_, now);
     const bool FIRE_FRESH = this->IsFresh(fire_received_, last_fire_time_, now);
-    const bool CHANGED = CHASSIS_FRESH != chassis_fresh_ ||
+    const bool CHANGED = CHASSIS_FRESH != chassis_input_.fresh ||
                          GIMBAL_FRESH != gimbal_fresh_ ||
                          FIRE_FRESH != fire_fresh_;
 
-    chassis_fresh_ = CHASSIS_FRESH;
+    if (chassis_input_.fresh && !CHASSIS_FRESH) {
+      host_chassis_session_status_tp_.Publish(CHASSIS_STATUS);
+    }
+    chassis_input_.fresh = CHASSIS_FRESH;
     gimbal_fresh_ = GIMBAL_FRESH;
     fire_fresh_ = FIRE_FRESH;
     return CHANGED;
@@ -163,8 +173,12 @@ class HostData : public LibXR::Application {
 
   static bool IsFresh(bool received, LibXR::MillisecondTimestamp last_time,
                       LibXR::MillisecondTimestamp now) {
-    return received &&
-           (now - last_time).ToMillisecond() <= HOST_DATA_TIMEOUT_MS;
+    return Pldx::HostDataDetail::IsFresh(received, last_time, now);
+  }
+
+  void PublishChassisStatus(LibXR::MillisecondTimestamp now) {
+    auto status = chassis_input_.SessionStatus(now);
+    host_chassis_session_status_tp_.Publish(status);
   }
 
   CMD::Data BuildHostCMD(LibXR::MillisecondTimestamp now) {
@@ -172,10 +186,10 @@ class HostData : public LibXR::Application {
     host_cmd.ctrl_source = CMD::ControlSource::CTRL_SOURCE_AI;
 
     // 在线状态由接收标志和时间戳决定，合法的零值数据不能视为离线。
-    if (this->IsFresh(chassis_received_, last_chassis_time_, now)) {
-      host_cmd.chassis.x = host_chassis_data_.vx;
-      host_cmd.chassis.y = host_chassis_data_.vy;
-      host_cmd.chassis.z = host_chassis_data_.w;
+    if (chassis_input_.IsFreshAt(now)) {
+      host_cmd.chassis.x = chassis_input_.target.vx;
+      host_cmd.chassis.y = chassis_input_.target.vy;
+      host_cmd.chassis.z = chassis_input_.target.wz;
       host_cmd.chassis_online = true;
     }
 
@@ -197,7 +211,8 @@ class HostData : public LibXR::Application {
   }
 
   CMD* cmd_;
-  HostChassisTarget host_chassis_data_ = {};
+  Pldx::HostDataDetail::ChassisInputState<LibXR::MillisecondTimestamp>
+      chassis_input_;
   LauncherCMD host_fire_notify_ = {};
 
   LibXR::EulerAngle<float> host_euler_;
@@ -206,17 +221,15 @@ class HostData : public LibXR::Application {
 
   LibXR::Topic host_gimbal_data_tp_;
   LibXR::Topic host_chassis_data_tp_;
+  LibXR::Topic host_chassis_session_status_tp_;
   LibXR::Topic host_fire_notify_tp_;
 
-  LibXR::MillisecondTimestamp last_chassis_time_ = 0;
   LibXR::MillisecondTimestamp last_gimbal_time_ = 0;
   LibXR::MillisecondTimestamp last_fire_time_ = 0;
 
-  bool chassis_received_ = false;
   bool gimbal_received_ = false;
   bool fire_received_ = false;
 
-  bool chassis_fresh_ = false;
   bool gimbal_fresh_ = false;
   bool fire_fresh_ = false;
 

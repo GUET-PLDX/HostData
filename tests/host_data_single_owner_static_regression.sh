@@ -2,7 +2,9 @@
 
 set -euo pipefail
 
-header=${1:-HostData.hpp}
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+module_dir=$(cd -- "$script_dir/.." && pwd)
+header=${1:-"$module_dir/HostData.hpp"}
 
 if [[ ! -f "$header" ]]; then
   printf 'missing header: %s\n' "$header" >&2
@@ -74,8 +76,14 @@ owner_thread=$(extract_block 'static void ThreadFunc\(HostData\* host_data\)')
 apply_gimbal=$(extract_block 'void ApplyGimbal\(const HostGimbalTarget&')
 [[ -n "$apply_gimbal" ]] || fail 'ApplyGimbal owner helper'
 
+apply_chassis=$(extract_block 'bool ApplyChassis\(const Pldx::NavLink::ChassisTargetV1&')
+[[ -n "$apply_chassis" ]] || fail 'ApplyChassis owner helper'
+
 freshness_changed=$(extract_block 'bool FreshnessChanged\(LibXR::MillisecondTimestamp')
 [[ -n "$freshness_changed" ]] || fail 'FreshnessChanged owner helper'
+
+publish_chassis_status=$(extract_block 'void PublishChassisStatus\(LibXR::MillisecondTimestamp')
+[[ -n "$publish_chassis_status" ]] || fail 'PublishChassisStatus owner helper'
 
 is_fresh=$(extract_block 'static bool IsFresh\(bool received,')
 [[ -n "$is_fresh" ]] || fail 'received-aware IsFresh helper'
@@ -100,6 +108,15 @@ require_file_text \
   'thread_.Create(this, ThreadFunc, "HostDataThread", task_stack_depth,' \
   'HostData thread creation'
 require_file_text 'LibXR::Thread thread_;' 'HostData thread member'
+require_file_text \
+  'LibXR::Topic::CreateTopic<Pldx::HostChassisSession::Status>(' \
+  'firmware-local chassis session status topic creation'
+require_file_text \
+  'Pldx::HostChassisSession::STATUS_TOPIC' \
+  'firmware-local chassis session status topic name'
+require_file_pattern \
+  'PublishChassisStatus\(LibXR::Timebase::GetMilliseconds\(\)\);\s*thread_\.Create\(this, ThreadFunc, "HostDataThread", task_stack_depth,' \
+  'startup false status publication before owner thread starts'
 
 forbid_file_text 'RegisterCallback' 'callback registration must be removed'
 forbid_file_text 'HostCMD(bool' 'callback-era HostCMD must be removed'
@@ -109,7 +126,7 @@ require_block_text "$owner_thread" \
   'LibXR::Topic::ASyncSubscriber<HostGimbalTarget> gimbal_sub(' \
   'gimbal asynchronous subscriber'
 require_block_text "$owner_thread" \
-  'LibXR::Topic::ASyncSubscriber<HostChassisTarget> chassis_sub(' \
+  'LibXR::Topic::ASyncSubscriber<Pldx::NavLink::ChassisTargetV1> chassis_sub(' \
   'chassis asynchronous subscriber'
 require_block_text "$owner_thread" \
   'LibXR::Topic::ASyncSubscriber<LauncherCMD> fire_sub(' \
@@ -127,8 +144,8 @@ require_block_pattern "$owner_thread" \
   'const auto DATA\s*=\s*gimbal_sub\.GetData\(\);\s*host_data->ApplyGimbal\(DATA, NOW\);\s*gimbal_sub\.StartWaiting\(\);' \
   'gimbal subscriber rearm after consumption'
 require_block_pattern "$owner_thread" \
-  'host_data->host_chassis_data_\s*=\s*chassis_sub\.GetData\(\);\s*host_data->last_chassis_time_\s*=\s*NOW;\s*host_data->chassis_received_\s*=\s*true;\s*chassis_sub\.StartWaiting\(\);' \
-  'chassis subscriber rearm after consumption'
+  'const bool CHASSIS_ACCEPTED\s*=\s*host_data->ApplyChassis\(chassis_sub\.GetData\(\), NOW\);\s*chassis_sub\.StartWaiting\(\);\s*updated\s*=\s*Pldx::HostDataDetail::AccumulateUpdate\(updated,\s*CHASSIS_ACCEPTED\);' \
+  'chassis acceptance-aware update aggregation and rearm'
 require_block_pattern "$owner_thread" \
   'host_data->host_fire_notify_\s*=\s*fire_sub\.GetData\(\);\s*host_data->last_fire_time_\s*=\s*NOW;\s*host_data->fire_received_\s*=\s*true;\s*fire_sub\.StartWaiting\(\);' \
   'fire subscriber rearm after consumption'
@@ -146,7 +163,14 @@ require_block_text "$owner_thread" \
   '5 ms owner-loop period'
 
 feed_count=$(grep -Fc 'FeedAI(' "$header")
-[[ "$feed_count" -eq 1 ]] || fail 'single owner-thread FeedAI call'
+[[ "$feed_count" -eq 2 ]] || fail 'owner-loop and invalid-chassis FeedAI calls'
+
+require_block_pattern "$apply_chassis" \
+  'const bool ACCEPTED\s*=\s*chassis_input_\.Apply\(\s*data, now,\s*\[this, now\] \{ cmd_->FeedAI\(BuildHostCMD\(now\)\); \}\);\s*PublishChassisStatus\(now\);\s*return ACCEPTED;' \
+  'every chassis frame publishes authority after fail-closed processing'
+require_block_pattern "$publish_chassis_status" \
+  'auto status\s*=\s*chassis_input_\.SessionStatus\(now\);\s*host_chassis_session_status_tp_\.Publish\(status\);' \
+  'typed authority status publication'
 
 require_block_text "$apply_gimbal" \
   'host_euler_ = LibXR::EulerAngle<float>(data.rol, data.pit, data.yaw);' \
@@ -162,7 +186,7 @@ require_block_text "$apply_gimbal" 'last_gimbal_time_ = now;' \
 require_block_text "$apply_gimbal" 'gimbal_received_ = true;' \
   'gimbal received-state update'
 
-for state in chassis gimbal fire; do
+for state in gimbal fire; do
   require_file_text "bool ${state}_received_ = false;" \
     "${state} received-state member"
   require_block_text "$freshness_changed" \
@@ -175,22 +199,33 @@ for state in chassis gimbal fire; do
     "this->IsFresh(${state}_received_, last_${state}_time_, now)" \
     "${state} BuildHostCMD freshness guard"
 done
+require_block_text "$freshness_changed" \
+  'auto CHASSIS_STATUS = chassis_input_.SessionStatus(now);' \
+  'chassis policy freshness sample'
 require_block_pattern "$freshness_changed" \
-  'const bool CHANGED\s*=\s*CHASSIS_FRESH != chassis_fresh_\s*\|\|\s*GIMBAL_FRESH != gimbal_fresh_\s*\|\|\s*FIRE_FRESH != fire_fresh_;' \
+  'if \(chassis_input_\.fresh && !CHASSIS_FRESH\) \{\s*host_chassis_session_status_tp_\.Publish\(CHASSIS_STATUS\);\s*\}' \
+  'freshness expiry publishes false authority status'
+require_block_text "$freshness_changed" \
+  'chassis_input_.fresh = CHASSIS_FRESH;' \
+  'chassis policy freshness state update'
+require_block_text "$build_host_cmd" \
+  'if (chassis_input_.IsFreshAt(now)) {' \
+  'chassis policy BuildHostCMD freshness guard'
+require_block_pattern "$freshness_changed" \
+  'const bool CHANGED\s*=\s*CHASSIS_FRESH != chassis_input_\.fresh\s*\|\|\s*GIMBAL_FRESH != gimbal_fresh_\s*\|\|\s*FIRE_FRESH != fire_fresh_;' \
   'freshness edge must compare all current and previous states'
 require_block_text "$freshness_changed" 'return CHANGED;' \
   'freshness transition result'
 
 require_block_pattern "$is_fresh" \
-  'return received\s*&&\s*\(now - last_time\)\.ToMillisecond\(\) <=\s*HOST_DATA_TIMEOUT_MS;' \
+  'return Pldx::HostDataDetail::IsFresh\(received, last_time, now\);' \
   'received-aware wrap-safe freshness duration'
 forbid_file_text 'static_cast<uint32_t>(last_time) != 0U' \
   'timestamp zero must not mean never received'
 
 writer_blocks="${owner_thread}"$'\n'"${apply_gimbal}"$'\n'"${freshness_changed}"
-for member in host_chassis_data_ host_fire_notify_ host_euler_ host_gyro_ \
-  host_accl_ last_chassis_time_ last_gimbal_time_ last_fire_time_ \
-  chassis_received_ gimbal_received_ fire_received_ chassis_fresh_ \
+for member in host_fire_notify_ host_euler_ host_gyro_ host_accl_ \
+  last_gimbal_time_ last_fire_time_ gimbal_received_ fire_received_ \
   gimbal_fresh_ fire_fresh_; do
   all_assignment_count=$(grep -Po \
     "(?:host_data->)?${member}[[:space:]]*=" "$header" | wc -l)

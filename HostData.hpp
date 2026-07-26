@@ -12,7 +12,9 @@ constructor_args:
   - thread_priority: LibXR::Thread::Priority::MEDIUM
 template_args: []
 required_hardware: []
-depends: []
+depends:
+  - pldx/CMD
+  - pldx/NavLinkProtocol
 === END MANIFEST === */
 // clang-format on
 

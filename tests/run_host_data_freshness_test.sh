@@ -9,6 +9,7 @@ binary=$(mktemp /tmp/host_data_freshness_test.XXXXXX)
 trap 'rm -f "$binary"' EXIT
 
 "$cxx" -std=c++20 -Wall -Wextra -Werror \
+  -I"$module_dir/../CMD" \
   -I"$module_dir/../NavLinkProtocol" \
   "$script_dir/host_data_freshness_test.cpp" -o "$binary"
 "$binary"

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <utility>
 
+#include "ChassisCommandContract.hpp"
 #include "HostChassisSessionStatus.hpp"
 #include "NavLinkProtocol.hpp"
 
@@ -21,9 +22,10 @@ bool IsFresh(bool received, Timestamp last_time, Timestamp now) {
 
 inline bool ChassisTargetValid(const NavLink::ChassisTargetV1& target) {
   return NavLink::HeaderCompatible<NavLink::ChassisTargetV1>(target.header) &&
-         (target.control_flags & NavLink::CHASSIS_ENABLED) != 0U &&
-         std::isfinite(target.vx) && std::isfinite(target.vy) &&
-         std::isfinite(target.wz);
+         target.control_flags == NavLink::CHASSIS_ENABLED &&
+         target.reserved[0] == 0U && target.reserved[1] == 0U &&
+         target.reserved[2] == 0U &&
+         ChassisCommandContract::is_valid_si(target.vx, target.vy, target.wz);
 }
 
 inline bool AccumulateUpdate(bool updated, bool input_accepted) {

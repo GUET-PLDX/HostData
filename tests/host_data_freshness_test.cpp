@@ -30,7 +30,7 @@ ChassisTargetV1 MakeTarget(uint32_t sequence = 7U) {
   target.header = Pldx::NavLink::MakeHeader<ChassisTargetV1>(sequence, 10U);
   target.vx = 1.0F;
   target.vy = -2.0F;
-  target.wz = 3.0F;
+  target.wz = 1.5F;
   target.control_flags = Pldx::NavLink::CHASSIS_ENABLED;
   return target;
 }
@@ -136,6 +136,15 @@ void TestProductionChassisInputPolicy() {
   ExpectFailClosed(invalid);
   invalid = MakeTarget();
   invalid.wz = std::numeric_limits<float>::infinity();
+  ExpectFailClosed(invalid);
+  invalid = MakeTarget();
+  invalid.control_flags |= 0x80U;
+  ExpectFailClosed(invalid);
+  invalid = MakeTarget();
+  invalid.reserved[1] = 1U;
+  ExpectFailClosed(invalid);
+  invalid = MakeTarget();
+  invalid.vx = 2.5001F;
   ExpectFailClosed(invalid);
 }
 

@@ -192,6 +192,7 @@ class HostData : public LibXR::Application {
       host_cmd.chassis.x = chassis_input_.target.vx;
       host_cmd.chassis.y = chassis_input_.target.vy;
       host_cmd.chassis.z = chassis_input_.target.wz;
+      host_cmd.chassis.si_units = true;
       host_cmd.chassis_online = true;
     }
 

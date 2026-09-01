@@ -76,7 +76,7 @@ owner_thread=$(extract_block 'static void ThreadFunc\(HostData\* host_data\)')
 apply_gimbal=$(extract_block 'void ApplyGimbal\(const HostGimbalTarget&')
 [[ -n "$apply_gimbal" ]] || fail 'ApplyGimbal owner helper'
 
-apply_chassis=$(extract_block 'bool ApplyChassis\(const Pldx::NavLink::ChassisTargetV1&')
+apply_chassis=$(extract_block 'bool ApplyChassis\(const Pldx::NavLink::ChassisTarget&')
 [[ -n "$apply_chassis" ]] || fail 'ApplyChassis owner helper'
 
 freshness_changed=$(extract_block 'bool FreshnessChanged\(LibXR::MillisecondTimestamp')
@@ -126,7 +126,7 @@ require_block_text "$owner_thread" \
   'LibXR::Topic::ASyncSubscriber<HostGimbalTarget> gimbal_sub(' \
   'gimbal asynchronous subscriber'
 require_block_text "$owner_thread" \
-  'LibXR::Topic::ASyncSubscriber<Pldx::NavLink::ChassisTargetV1> chassis_sub(' \
+  'LibXR::Topic::ASyncSubscriber<Pldx::NavLink::ChassisTarget> chassis_sub(' \
   'chassis asynchronous subscriber'
 require_block_text "$owner_thread" \
   'LibXR::Topic::ASyncSubscriber<LauncherCMD> fire_sub(' \

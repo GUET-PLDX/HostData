@@ -20,12 +20,11 @@ bool IsFresh(bool received, Timestamp last_time, Timestamp now) {
   return received && (now - last_time).ToMillisecond() <= HOST_DATA_TIMEOUT_MS;
 }
 
-inline bool ChassisTargetValid(const NavLink::ChassisTargetV1& target) {
-  return NavLink::HeaderCompatible<NavLink::ChassisTargetV1>(target.header) &&
-         target.control_flags == NavLink::CHASSIS_ENABLED &&
-         target.reserved[0] == 0U && target.reserved[1] == 0U &&
-         target.reserved[2] == 0U &&
-         ChassisCommandContract::is_valid_si(target.vx, target.vy, target.wz);
+inline bool ChassisTargetValid(const NavLink::ChassisTarget& target) {
+  return ChassisCommandContract::is_valid_si(target.vx_mps, target.vy_mps,
+                                             target.vw_rad_s) &&
+         std::isfinite(target.fx_global) && std::isfinite(target.fy_global) &&
+         std::isfinite(target.fw_global);
 }
 
 inline bool AccumulateUpdate(bool updated, bool input_accepted) {
@@ -35,7 +34,7 @@ inline bool AccumulateUpdate(bool updated, bool input_accepted) {
 template <typename Timestamp>
 struct ChassisInputState {
   template <typename FeedZeroOffline>
-  bool Apply(const NavLink::ChassisTargetV1& input, Timestamp now,
+  bool Apply(const NavLink::ChassisTarget& input, Timestamp now,
              FeedZeroOffline&& feed_zero_offline) {
     Expire(now);
     if (!ChassisTargetValid(input)) {
@@ -45,11 +44,6 @@ struct ChassisInputState {
     }
 
     if (armed) {
-      if (!SequenceNewer(input.header.sequence, last_sequence)) {
-        Disarm(true);
-        std::forward<FeedZeroOffline>(feed_zero_offline)();
-        return false;
-      }
       Accept(input, now);
       return true;
     }
@@ -101,25 +95,21 @@ struct ChassisInputState {
             ARMED_FRESH};
   }
 
-  NavLink::ChassisTargetV1 target{};
+  NavLink::ChassisTarget target{};
   Timestamp last_time{};
   bool received = false;
   bool fresh = false;
 
  private:
-  static bool TargetIsZero(const NavLink::ChassisTargetV1& input) {
-    return input.vx == 0.0F && input.vy == 0.0F && input.wz == 0.0F;
+  static bool TargetIsZero(const NavLink::ChassisTarget& input) {
+    return input.vx_mps == 0.0F && input.vy_mps == 0.0F &&
+           input.vw_rad_s == 0.0F;
   }
 
-  static bool SequenceNewer(uint32_t sequence, uint32_t previous) {
-    const uint32_t DIFFERENCE = sequence - previous;
-    return DIFFERENCE != 0U && DIFFERENCE < 0x80000000U;
-  }
-
-  void Accept(const NavLink::ChassisTargetV1& input, Timestamp now) {
+  void Accept(const NavLink::ChassisTarget& input, Timestamp now) {
     target = input;
     last_time = now;
-    last_sequence = input.header.sequence;
+    last_sequence += 1U;
     received = true;
     accepted_seen = true;
     armed = true;

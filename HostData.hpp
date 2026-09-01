@@ -67,7 +67,7 @@ class HostData : public LibXR::Application {
         host_gimbal_data_tp_(LibXR::Topic::CreateTopic<HostGimbalTarget>(
             host_gimbal_topic_name)),
         host_chassis_data_tp_(
-            LibXR::Topic::CreateTopic<Pldx::NavLink::ChassisTargetV1>(
+            LibXR::Topic::CreateTopic<Pldx::NavLink::ChassisTarget>(
                 host_chassis_data_topic_name)),
         host_chassis_session_status_tp_(
             LibXR::Topic::CreateTopic<Pldx::HostChassisSession::Status>(
@@ -90,7 +90,7 @@ class HostData : public LibXR::Application {
   static void ThreadFunc(HostData* host_data) {
     LibXR::Topic::ASyncSubscriber<HostGimbalTarget> gimbal_sub(
         host_data->host_gimbal_data_tp_);
-    LibXR::Topic::ASyncSubscriber<Pldx::NavLink::ChassisTargetV1> chassis_sub(
+    LibXR::Topic::ASyncSubscriber<Pldx::NavLink::ChassisTarget> chassis_sub(
         host_data->host_chassis_data_tp_);
     LibXR::Topic::ASyncSubscriber<LauncherCMD> fire_sub(
         host_data->host_fire_notify_tp_);
@@ -146,7 +146,7 @@ class HostData : public LibXR::Application {
     gimbal_received_ = true;
   }
 
-  bool ApplyChassis(const Pldx::NavLink::ChassisTargetV1& data,
+  bool ApplyChassis(const Pldx::NavLink::ChassisTarget& data,
                     LibXR::MillisecondTimestamp now) {
     const bool ACCEPTED = chassis_input_.Apply(
         data, now, [this, now] { cmd_->FeedAI(BuildHostCMD(now)); });
@@ -189,10 +189,14 @@ class HostData : public LibXR::Application {
 
     // 在线状态由接收标志和时间戳决定，合法的零值数据不能视为离线。
     if (chassis_input_.IsFreshAt(now)) {
-      host_cmd.chassis.x = chassis_input_.target.vx;
-      host_cmd.chassis.y = chassis_input_.target.vy;
-      host_cmd.chassis.z = chassis_input_.target.wz;
+      host_cmd.chassis.x = chassis_input_.target.vx_mps;
+      host_cmd.chassis.y = chassis_input_.target.vy_mps;
+      host_cmd.chassis.z = chassis_input_.target.vw_rad_s;
       host_cmd.chassis.si_units = true;
+      host_cmd.chassis.force_x_global_n = chassis_input_.target.fx_global;
+      host_cmd.chassis.force_y_global_n = chassis_input_.target.fy_global;
+      host_cmd.chassis.torque_z_global_nm = chassis_input_.target.fw_global;
+      host_cmd.chassis.force_control = !chassis_input_.target.use_speed_control;
       host_cmd.chassis_online = true;
     }
 

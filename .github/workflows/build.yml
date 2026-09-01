@@ -59,7 +59,7 @@ jobs:
       - name: Checkout CMD module
         uses: actions/checkout@v4
         with:
-          repository: QDU-Robomaster/CMD
+          repository: GUET-PLDX/CMD
           path: Modules/CMD
 
       - name: Checkout NavLinkProtocol module

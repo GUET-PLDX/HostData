@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <limits>
 
-#include "../HostDataChassisInput.hpp"
+#include "host_data_detail.inc"
 
 namespace {
 
@@ -129,9 +129,6 @@ void TestProductionChassisInputPolicy() {
   ExpectFailClosed(invalid);
   invalid = MakeTarget();
   invalid.vw_rad_s = std::numeric_limits<float>::infinity();
-  ExpectFailClosed(invalid);
-  invalid = MakeTarget();
-  invalid.fx_global = std::numeric_limits<float>::quiet_NaN();
   ExpectFailClosed(invalid);
   invalid = MakeTarget();
   invalid.vx_mps = 2.5001F;

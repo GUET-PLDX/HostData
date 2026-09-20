@@ -4,8 +4,8 @@
 上位机数据接入模块。把主机侧目标转换为 CMD 输入。
 
 ## 2. 主要函数说明
-1. HostCMD: 汇总云台/底盘/发射数据并喂给 CMD。
-2. 构造函数中的三个 Topic 回调: 接收 euler、chassis、fire 数据。
+1. ThreadFunc: 每 5 ms 接收云台、底盘、发射 Topic 数据，检查超时并更新 CMD。
+2. BuildHostCMD: 汇总有效数据；底盘输入校验、超时及重新使能逻辑均位于 HostData.hpp。
 3. OnMonitor: 监控钩子（当前为空实现）。
 
 ## 3. 接入步骤
@@ -23,9 +23,11 @@ module: HostData
 entry_header: Modules/HostData/HostData.hpp
 constructor_args:
   - cmd: '@cmd'
-  - host_euler_topic_name: "target_eulr"
+  - host_gimbal_topic_name: "target_euler"
   - host_chassis_data_topic_name: "host_chassis_data"
   - host_fire_topic_name: "host_fire_notify"
+  - task_stack_depth: 1024
+  - thread_priority: LibXR::Thread::Priority::MEDIUM
 template_args:
 []
 
@@ -34,7 +36,8 @@ Required Hardware:
 []
 
 Depends:
-[]
+- pldx/CMD
+- pldx/NavLinkProtocol
 
 ## 6. 代码入口
 Modules/HostData/HostData.hpp

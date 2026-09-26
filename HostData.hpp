@@ -14,7 +14,7 @@ template_args: []
 required_hardware: []
 depends:
   - pldx/CMD
-  - pldx/NavLinkProtocol
+  - pldx/NavHostData
 === END MANIFEST === */
 // clang-format on
 
@@ -23,7 +23,7 @@ depends:
 #include <utility>
 
 #include "CMD.hpp"
-#include "NavLinkProtocol.hpp"
+#include "NavHostData.hpp"
 #include "app_framework.hpp"
 #include "libxr_def.hpp"
 #include "libxr_time.hpp"
@@ -45,7 +45,7 @@ bool IsFresh(bool received, Timestamp last_time, Timestamp now) {
   return received && (now - last_time).ToMillisecond() <= HOST_DATA_TIMEOUT_MS;
 }
 
-inline bool ChassisTargetValid(const NavLink::ChassisTarget& target) {
+inline bool ChassisTargetValid(const NavHostData::ChassisTarget& target) {
   return std::isfinite(target.vx_mps) && std::isfinite(target.vy_mps) &&
          std::isfinite(target.vw_rad_s) && std::isfinite(target.current_yaw) &&
          std::isfinite(target.current_vx) && std::isfinite(target.current_vy) &&
@@ -61,7 +61,7 @@ inline bool AccumulateUpdate(bool updated, bool input_accepted) {
 template <typename Timestamp>
 struct ChassisInputState {
   template <typename FeedZeroOffline>
-  bool Apply(const NavLink::ChassisTarget& input, Timestamp now,
+  bool Apply(const NavHostData::ChassisTarget& input, Timestamp now,
              FeedZeroOffline&& feed_zero_offline) {
     Expire(now);
     if (!ChassisTargetValid(input)) {
@@ -122,18 +122,18 @@ struct ChassisInputState {
             ARMED_FRESH};
   }
 
-  NavLink::ChassisTarget target{};
+  NavHostData::ChassisTarget target{};
   Timestamp last_time{};
   bool received = false;
   bool fresh = false;
 
  private:
-  static bool TargetIsZero(const NavLink::ChassisTarget& input) {
+  static bool TargetIsZero(const NavHostData::ChassisTarget& input) {
     return input.vx_mps == 0.0F && input.vy_mps == 0.0F &&
            input.vw_rad_s == 0.0F;
   }
 
-  void Accept(const NavLink::ChassisTarget& input, Timestamp now) {
+  void Accept(const NavHostData::ChassisTarget& input, Timestamp now) {
     target = input;
     last_time = now;
     last_sequence += 1U;
@@ -208,7 +208,7 @@ class HostData : public LibXR::Application {
         host_gimbal_data_tp_(LibXR::Topic::CreateTopic<HostGimbalTarget>(
             host_gimbal_topic_name)),
         host_chassis_data_tp_(
-            LibXR::Topic::CreateTopic<Pldx::NavLink::ChassisTarget>(
+            LibXR::Topic::CreateTopic<Pldx::NavHostData::ChassisTarget>(
                 host_chassis_data_topic_name)),
         host_chassis_session_status_tp_(
             LibXR::Topic::CreateTopic<Pldx::HostChassisSession::Status>(
@@ -231,7 +231,7 @@ class HostData : public LibXR::Application {
   static void ThreadFunc(HostData* host_data) {
     LibXR::Topic::ASyncSubscriber<HostGimbalTarget> gimbal_sub(
         host_data->host_gimbal_data_tp_);
-    LibXR::Topic::ASyncSubscriber<Pldx::NavLink::ChassisTarget> chassis_sub(
+    LibXR::Topic::ASyncSubscriber<Pldx::NavHostData::ChassisTarget> chassis_sub(
         host_data->host_chassis_data_tp_);
     LibXR::Topic::ASyncSubscriber<LauncherCMD> fire_sub(
         host_data->host_fire_notify_tp_);
@@ -287,7 +287,7 @@ class HostData : public LibXR::Application {
     gimbal_received_ = true;
   }
 
-  bool ApplyChassis(const Pldx::NavLink::ChassisTarget& data,
+  bool ApplyChassis(const Pldx::NavHostData::ChassisTarget& data,
                     LibXR::MillisecondTimestamp now) {
     const bool ACCEPTED = chassis_input_.Apply(
         data, now, [this, now] { cmd_->FeedAI(BuildHostCMD(now)); });

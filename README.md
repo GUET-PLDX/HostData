@@ -37,7 +37,7 @@ Required Hardware:
 
 Depends:
 - pldx/CMD
-- pldx/NavLinkProtocol
+- pldx/NavHostData
 
 ## 6. 代码入口
 Modules/HostData/HostData.hpp

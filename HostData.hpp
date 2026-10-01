@@ -329,10 +329,15 @@ class HostData : public LibXR::Application {
     host_cmd.ctrl_source = CMD::ControlSource::CTRL_SOURCE_AI;
 
     // 在线状态由接收标志和时间戳决定，合法的零值数据不能视为离线。
+    // 导航速度为物理量（m/s、rad/s），幅值已由 ChassisTargetValid 限定。
     if (chassis_input_.IsFreshAt(now)) {
-      host_cmd.chassis.x = chassis_input_.target.vx_mps / 2.5F;
-      host_cmd.chassis.y = chassis_input_.target.vy_mps / 2.5F;
-      host_cmd.chassis.z = chassis_input_.target.vw_rad_s / 1.8F;
+      host_cmd.chassis.source = CMD::ChassisCommandSource::NAVIGATION;
+      host_cmd.chassis.navigation_velocity.vx_mps =
+          chassis_input_.target.vx_mps;
+      host_cmd.chassis.navigation_velocity.vy_mps =
+          chassis_input_.target.vy_mps;
+      host_cmd.chassis.navigation_velocity.wz_rad_s =
+          chassis_input_.target.vw_rad_s;
       host_cmd.chassis_online = true;
     }
 

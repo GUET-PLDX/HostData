@@ -23,6 +23,6 @@ trap 'rm -rf "$test_dir"' EXIT
   -I"$module_dir/../NavHostData" -I"$module_dir/../../Middlewares/Third_Party/LibXR/src/core" \
   "$script_dir/host_data_freshness_test.cpp" -o "$binary"
 "$binary"
-"$script_dir/host_data_single_owner_static_regression.sh"
+bash "$script_dir/host_data_single_owner_static_regression.sh"
 
 printf 'PASS: HostData freshness and production wiring regression\n'

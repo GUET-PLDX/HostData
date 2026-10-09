@@ -62,11 +62,11 @@ jobs:
           repository: GUET-PLDX/CMD
           path: Modules/CMD
 
-      - name: Checkout NavHostData module
+      - name: Checkout HostDataLink module
         uses: actions/checkout@v4
         with:
           repository: GUET-PLDX/NavHostData
-          path: Modules/NavHostData
+          path: Modules/HostDataLink
 
       - name: Setup Python & Install deps
         run: |
@@ -136,4 +136,3 @@ jobs:
               sha: sha
             });
             console.log(`Created tag: ${tagName} on sha: ${sha}`);
-

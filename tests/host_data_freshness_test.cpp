@@ -23,7 +23,7 @@ struct TestTimestamp {
 };
 
 using Pldx::HostDataDetail::ChassisInputState;
-using Pldx::NavHostData::ChassisTarget;
+using Pldx::HostDataLink::ChassisTarget;
 
 ChassisTarget MakeTarget(uint32_t = 7U) {
   ChassisTarget target{};

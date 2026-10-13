@@ -92,13 +92,9 @@ is_fresh=$(extract_block 'static bool IsFresh\(bool received,')
 build_host_cmd=$(extract_block 'CMD::Data BuildHostCMD\(LibXR::MillisecondTimestamp')
 [[ -n "$build_host_cmd" ]] || fail 'BuildHostCMD helper'
 
-on_monitor=$(extract_block 'void OnMonitor\(\) override')
-[[ -n "$on_monitor" ]] || fail 'OnMonitor override'
+on_monitor=$(extract_block 'void OnMonitor\(\)' )
+[[ -n "$on_monitor" ]] || fail 'OnMonitor hook'
 
-require_file_text 'task_stack_depth: 1024' 'task_stack_depth manifest argument'
-require_file_text \
-  'thread_priority: LibXR::Thread::Priority::MEDIUM' \
-  'thread_priority manifest argument'
 require_file_text \
   'uint32_t task_stack_depth,' \
   'task_stack_depth constructor argument'
@@ -244,7 +240,7 @@ for member in host_fire_notify_ host_euler_ host_gyro_ host_accl_ \
 done
 
 compact_monitor=$(tr -d '[:space:]' <<<"$on_monitor")
-[[ "$compact_monitor" == 'voidOnMonitor()override{}' ]] || \
+[[ "$compact_monitor" == 'voidOnMonitor(){}' ]] || \
   fail 'OnMonitor must be empty'
 
 printf 'PASS: HostData single-owner regression\n'

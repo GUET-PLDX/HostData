@@ -3,18 +3,9 @@
 // clang-format off
 /* === MODULE MANIFEST V2 ===
 module_description: No description provided
-constructor_args:
-  - cmd: '@cmd'
-  - host_gimbal_topic_name: "target_euler"
-  - host_chassis_data_topic_name: "host_chassis_data"
-  - host_fire_topic_name: "host_fire_notify"
-  - task_stack_depth: 1024
-  - thread_priority: LibXR::Thread::Priority::MEDIUM
-template_args: []
-required_hardware: []
 depends:
-  - pldx/CMD
-  - pldx/HostDataLink
+- id: GUET-PLDX/CMD
+- id: GUET-PLDX/HostDataLink
 === END MANIFEST === */
 // clang-format on
 
@@ -24,7 +15,7 @@ depends:
 
 #include "CMD.hpp"
 #include "HostDataLink.hpp"
-#include "app_framework.hpp"
+#include "libxr.hpp"
 #include "libxr_def.hpp"
 #include "libxr_time.hpp"
 #include "libxr_type.hpp"
@@ -175,7 +166,7 @@ struct ChassisInputState {
  * @brief 上位机数据接入模块
  * @details 将上位机发送的云台、底盘、发射命令转换为 CMD::Data 并喂给 CMD 模块。
  */
-class HostData : public LibXR::Application {
+class HostData {
  public:
   struct LauncherCMD {
     bool isfire;
@@ -189,8 +180,6 @@ class HostData : public LibXR::Application {
 
   /**
    * @brief 构造 HostData 模块
-   * @param hw 硬件容器
-   * @param app 应用管理器
    * @param cmd CMD 模块引用
    * @param host_gimbal_topic_name 云台目标欧拉角 Topic
    * @param host_chassis_data_topic_name 底盘目标速度 Topic
@@ -199,8 +188,7 @@ class HostData : public LibXR::Application {
    * @param thread_priority 数据聚合线程优先级
    */
   HostData(
-      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app, CMD& cmd,
-      const char* host_gimbal_topic_name,
+      CMD& cmd, const char* host_gimbal_topic_name,
       const char* host_chassis_data_topic_name,
       const char* host_fire_topic_name, uint32_t task_stack_depth,
       LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::MEDIUM)
@@ -215,8 +203,6 @@ class HostData : public LibXR::Application {
                 Pldx::HostChassisSession::STATUS_TOPIC)),
         host_fire_notify_tp_(
             LibXR::Topic::CreateTopic<LauncherCMD>(host_fire_topic_name)) {
-    UNUSED(hw);
-    app.Register(*this);
     PublishChassisStatus(LibXR::Timebase::GetMilliseconds());
     thread_.Create(this, ThreadFunc, "HostDataThread", task_stack_depth,
                    thread_priority);
@@ -225,7 +211,7 @@ class HostData : public LibXR::Application {
   /**
    * @brief 监控回调
    */
-  void OnMonitor() override {}
+  void OnMonitor() {}
 
  private:
   static void ThreadFunc(HostData* host_data) {

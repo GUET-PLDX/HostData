@@ -4,8 +4,8 @@
 /* === MODULE MANIFEST V2 ===
 module_description: No description provided
 depends:
-- pldx/CMD@master
-- pldx/HostDataLink@master
+- pldx/CMD@mc02-static
+- pldx/HostDataLink@mc02-static
 === END MANIFEST === */
 // clang-format on
 

@@ -188,9 +188,10 @@ class HostData {
    * @param thread_priority 数据聚合线程优先级
    */
   HostData(
-      CMD& cmd, const char* host_gimbal_topic_name,
-      const char* host_chassis_data_topic_name,
-      const char* host_fire_topic_name, uint32_t task_stack_depth,
+      CMD& cmd, const char* host_gimbal_topic_name = "target_euler",
+      const char* host_chassis_data_topic_name = "host_chassis_data",
+      const char* host_fire_topic_name = "host_fire_notify",
+      uint32_t task_stack_depth = 1024,
       LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::MEDIUM)
       : cmd_(&cmd),
         host_gimbal_data_tp_(LibXR::Topic::CreateTopic<HostGimbalTarget>(

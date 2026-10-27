@@ -27,18 +27,17 @@ using Pldx::HostDataLink::ChassisTarget;
 
 ChassisTarget MakeTarget(uint32_t = 7U) {
   ChassisTarget target{};
-  target.vx_mps = 1.0F;
-  target.vy_mps = -2.0F;
-  target.vw_rad_s = 1.5F;
-  target.use_speed_control = true;
+  target.fx_n = 1.0F;
+  target.fy_n = -2.0F;
+  target.mz_nm = 1.5F;
   return target;
 }
 
 ChassisTarget MakeZeroTarget(uint32_t sequence = 0U) {
   auto target = MakeTarget(sequence);
-  target.vx_mps = 0.0F;
-  target.vy_mps = -0.0F;
-  target.vw_rad_s = 0.0F;
+  target.fx_n = 0.0F;
+  target.fy_n = -0.0F;
+  target.mz_nm = 0.0F;
   return target;
 }
 
@@ -69,9 +68,9 @@ void ExpectFailClosed(const ChassisTarget& invalid) {
     ++feed_count;
     assert(!state.received);
     assert(!state.fresh);
-    assert(state.target.vx_mps == 0.0F);
-    assert(state.target.vy_mps == 0.0F);
-    assert(state.target.vw_rad_s == 0.0F);
+    assert(state.target.fx_n == 0.0F);
+    assert(state.target.fy_n == 0.0F);
+    assert(state.target.mz_nm == 0.0F);
   });
 
   assert(!ACCEPTED);
@@ -98,12 +97,12 @@ void TestProductionChassisInputPolicy() {
   assert(state.IsArmed());
   assert(state.received);
   assert(state.last_time.value == 125U);
-  assert(state.target.vx_mps == 0.0F);
+  assert(state.target.fx_n == 0.0F);
   assert(state.LastSequence() == 1U);
   assert(state.IsFreshAt(TestTimestamp{275U}));
   assert(!state.IsFreshAt(TestTimestamp{276U}));
   assert(!state.IsArmed());
-  assert(state.target.vx_mps == 0.0F);
+  assert(state.target.fx_n == 0.0F);
   assert(
       !state.Apply(MakeTarget(5U), TestTimestamp{277U}, [&] { ++feed_count; }));
 
@@ -119,19 +118,19 @@ void TestProductionChassisInputPolicy() {
                      [&] { ++feed_count; }));
   assert(
       state.Apply(MakeTarget(8U), TestTimestamp{401U}, [&] { ++feed_count; }));
-  assert(state.target.vx_mps == 1.0F);
+  assert(state.target.fx_n == 1.0F);
   assert(
       state.Apply(MakeTarget(8U), TestTimestamp{402U}, [&] { ++feed_count; }));
   assert(state.IsArmed());
 
   auto invalid = MakeTarget();
-  invalid.vx_mps = std::numeric_limits<float>::quiet_NaN();
+  invalid.fx_n = std::numeric_limits<float>::quiet_NaN();
   ExpectFailClosed(invalid);
   invalid = MakeTarget();
-  invalid.vw_rad_s = std::numeric_limits<float>::infinity();
+  invalid.mz_nm = std::numeric_limits<float>::infinity();
   ExpectFailClosed(invalid);
   invalid = MakeTarget();
-  invalid.vx_mps = 2.5001F;
+  invalid.fx_n = 1000.1F;
   ExpectFailClosed(invalid);
 }
 
@@ -203,7 +202,7 @@ void TestZeroProbationGapBoundariesAndTimestampWrap() {
 
 void TestRejectedFrameOwnerLoopAggregation() {
   auto invalid = MakeTarget();
-  invalid.vx_mps = std::numeric_limits<float>::quiet_NaN();
+  invalid.fx_n = std::numeric_limits<float>::quiet_NaN();
 
   ChassisInputState<TestTimestamp> state;
   uint32_t feed_count = 0U;
@@ -248,7 +247,7 @@ void TestAuthoritativeSessionStatusTransitions() {
   assert(EXPIRED.accepted_time_ms == 100U);
 
   auto invalid = MakeTarget(4U);
-  invalid.vx_mps = std::numeric_limits<float>::quiet_NaN();
+  invalid.fx_n = std::numeric_limits<float>::quiet_NaN();
   assert(!state.Apply(invalid, TestTimestamp{252U}, [] {}));
   assert(!state.SessionStatus(TestTimestamp{252U}).armed_fresh);
 }

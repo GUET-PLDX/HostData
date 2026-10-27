@@ -96,7 +96,7 @@ on_monitor=$(extract_block 'void OnMonitor\(\)' )
 [[ -n "$on_monitor" ]] || fail 'OnMonitor hook'
 
 require_file_text \
-  'uint32_t task_stack_depth,' \
+  'uint32_t task_stack_depth = 1024,' \
   'task_stack_depth constructor argument'
 require_file_pattern \
   'LibXR::Thread::Priority thread_priority\s*=\s*LibXR::Thread::Priority::MEDIUM' \

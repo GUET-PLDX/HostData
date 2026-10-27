@@ -17,11 +17,11 @@ trap 'rm -rf "$test_dir"' EXIT
     "$module_dir/HostData.hpp"
 } > "$test_dir/host_data_detail.inc"
 
-"$cxx" -std=c++20 -Wall -Wextra -Werror \
+"$cxx" -DHOST_DATA_LINK_PROTOCOL_ONLY -std=c++20 -Wall -Wextra -Werror \
   -I"$test_dir" \
   -I"$module_dir/../CMD" \
-  -I"$module_dir/../HostDataLink" -I"$module_dir/../../.tooling/LibXR-v2.0.1/src/core" \
-  -I"$module_dir/../../.tooling/LibXR-v2.0.1/src/core/assert" \
+  -I"$module_dir/../HostDataLink" -I"$module_dir/../../Middlewares/Third_Party/LibXR/src/core" \
+  -I"$module_dir/../../Middlewares/Third_Party/LibXR/src/core/assert" \
   "$script_dir/host_data_freshness_test.cpp" -o "$binary"
 "$binary"
 bash "$script_dir/host_data_single_owner_static_regression.sh"

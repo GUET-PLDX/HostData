@@ -37,12 +37,7 @@ bool IsFresh(bool received, Timestamp last_time, Timestamp now) {
 }
 
 inline bool ChassisTargetValid(const HostDataLink::ChassisTarget& target) {
-  return std::isfinite(target.vx_mps) && std::isfinite(target.vy_mps) &&
-         std::isfinite(target.vw_rad_s) && std::isfinite(target.current_yaw) &&
-         std::isfinite(target.current_vx) && std::isfinite(target.current_vy) &&
-         std::isfinite(target.current_vw) && std::isfinite(target.delta_yaw) &&
-         std::fabs(target.vx_mps) <= 2.5F && std::fabs(target.vy_mps) <= 2.5F &&
-         std::fabs(target.vw_rad_s) <= 1.8F;
+  return HostDataLinkDetail::ChassisCommandValid(target);
 }
 
 inline bool AccumulateUpdate(bool updated, bool input_accepted) {
@@ -120,8 +115,7 @@ struct ChassisInputState {
 
  private:
   static bool TargetIsZero(const HostDataLink::ChassisTarget& input) {
-    return input.vx_mps == 0.0F && input.vy_mps == 0.0F &&
-           input.vw_rad_s == 0.0F;
+    return input.fx_n == 0.0F && input.fy_n == 0.0F && input.mz_nm == 0.0F;
   }
 
   void Accept(const HostDataLink::ChassisTarget& input, Timestamp now) {
@@ -182,7 +176,7 @@ class HostData {
    * @brief 构造 HostData 模块
    * @param cmd CMD 模块引用
    * @param host_gimbal_topic_name 云台目标欧拉角 Topic
-   * @param host_chassis_data_topic_name 底盘目标速度 Topic
+   * @param host_chassis_data_topic_name 底盘驱动力 Topic
    * @param host_fire_topic_name 发射控制 Topic
    * @param task_stack_depth 数据聚合线程栈深度
    * @param thread_priority 数据聚合线程优先级
@@ -315,18 +309,14 @@ class HostData {
     CMD::Data host_cmd = {};
     host_cmd.ctrl_source = CMD::ControlSource::CTRL_SOURCE_AI;
 
-    // 在线状态由接收标志和时间戳决定，合法的零值数据不能视为离线。
-    // 导航速度为物理量（m/s、rad/s），幅值已由 ChassisTargetValid 限定。
+    CMD::NavigationFeedforward wrench{};
     if (chassis_input_.IsFreshAt(now)) {
       host_cmd.chassis.source = CMD::ChassisCommandSource::NAVIGATION;
-      host_cmd.chassis.navigation_velocity.vx_mps =
-          chassis_input_.target.vx_mps;
-      host_cmd.chassis.navigation_velocity.vy_mps =
-          chassis_input_.target.vy_mps;
-      host_cmd.chassis.navigation_velocity.wz_rad_s =
-          chassis_input_.target.vw_rad_s;
       host_cmd.chassis_online = true;
+      wrench = {chassis_input_.target.fx_n, chassis_input_.target.fy_n,
+                chassis_input_.target.mz_nm, true};
     }
+    chassis_ff_tp_.Publish(wrench);
 
     if (this->IsFresh(gimbal_received_, last_gimbal_time_, now)) {
       host_cmd.gimbal.pit = host_euler_.Pitch();
@@ -354,6 +344,8 @@ class HostData {
   Eigen::Matrix<float, 3, 1> host_gyro_ = {0, 0, 0};
   Eigen::Matrix<float, 3, 1> host_accl_ = {0, 0, 0};
 
+  LibXR::Topic chassis_ff_tp_ =
+      LibXR::Topic::CreateTopic<CMD::NavigationFeedforward>("chassis_ff");
   LibXR::Topic host_gimbal_data_tp_;
   LibXR::Topic host_chassis_data_tp_;
   LibXR::Topic host_chassis_session_status_tp_;
